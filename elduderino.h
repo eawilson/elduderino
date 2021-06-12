@@ -3,19 +3,19 @@
 
 #include <stdbool.h>
 #include <stddef.h>
-
+#include <stdio.h>
 
 
 
 typedef struct segment_t {
-    char *start;
-    char *qname;
-    char *rname;
-    char *cigar;
-    char *seq;
-    char *qual;
-    char *barcode;
-    char *next;
+    const char *start;
+    const char *qname;
+    const char *rname;
+    const char *cigar;
+    const char *seq;
+    const char *qual;
+    const char *barcode;
+    const char *next;
     size_t len;
     size_t qname_len;
     size_t rname_len;
@@ -29,12 +29,18 @@ typedef struct segment_t {
 
 
 typedef struct readpair_t {
-    Segment left;
-    Segment right;
+    Segment segment[2];
     } ReadPair;
 
 
-typedef void (*dedupe_function_t)(ReadPair *family, size_t family_size, int min_family_size);
+typedef struct dedupe_t {
+    FILE *output_file;
+    char *buffer;
+    size_t buffer_len;
+    } Dedupe;
+
+
+typedef void (*dedupe_function_t)(Dedupe *dd, ReadPair *family, size_t family_size, size_t min_family_size);
 
 
 
