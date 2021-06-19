@@ -385,30 +385,48 @@ void barcode_families(Dedupe *dd, ReadPair *family, size_t family_size) {
 
 
 void connor_families(Dedupe *dd, ReadPair *family, size_t family_size) {
-    size_t sub_family_size = 1, i = 1;
-    ReadPair *sub_family = family;
-    
+    size_t sub_family_size = 1;
+    int i = 0, j = 0;
+    bool changed = false;
+    ReadPair swap_readpair = {0};
+
     if (family_size < 2) {
         cigar_family(dd, family, family_size);
         }
     else {
-        for (i = 1;; ++i) {
-            if (i == family_size || cmp_barcodes((void *)sub_family, (void *)(family + i)) != 0) {
-                cigar_family(dd, sub_family, sub_family_size);
-                
-                if (i == family_size) {
-                    break;
-                    }
-                
-                sub_family = family + i;
-                sub_family_size = 1;
-                }
-            else {
-                ++sub_family_size;
+        for (i = 0; i < family_size; ++i) {
+            if (family[i].segment[0].barcode == NULL || family[i].segment[0].barcode2 == NULL) {
+                fprintf(stderr, "Error: Missing valid barcode tags\n");
+                exit(EXIT_FAILURE);
                 }
             }
+        
+        for (; family_size > 0; family_size -= sub_family_size) {
+            sub_family_size = 1;
+            do {
+                changed = false;
+                for (i = sub_family_size; i < family_size; ++i) {
+                    for (j = 0; j < sub_family_size; ++j) {
+                        if (memcmp(family[i].segment[0].barcode, family[j].segment[0].barcode, family[i].segment[0].barcode_len - family[i].segment[0].barcode2_len - 1) == 0 ||
+                            memcmp(family[i].segment[0].barcode2, family[j].segment[0].barcode2, family[i].segment[0].barcode2_len) == 0) {
+                            if (i > sub_family_size) {
+                                swap_readpair = family[sub_family_size];
+                                family[sub_family_size] = family[i];
+                                family[i] = swap_readpair;
+                                }
+                            ++sub_family_size;
+                            changed = true;
+                            break;
+                            }
+                        }
+                    }    
+                } while (changed);        
+            
+            cigar_family(dd, family, sub_family_size);
+            family += sub_family_size;
+            }
         }
-    }
+    }   
 
 
 
@@ -841,6 +859,7 @@ Segment parse_segment(const char *read, const char *sam_end) {
     
     segment.start = read;
     segment.barcode = NULL; // optional field so must be initialised
+    segment.barcode2 = NULL; // optional field so must be initialised
     segment.barcode_len = 0; // optional field so must be initialised
     for (start = read; read < sam_end; ++read) {
         if (*read == '\t' || *read == '\n') {
@@ -887,7 +906,9 @@ Segment parse_segment(const char *read, const char *sam_end) {
                     if (column > 11) { // barcode tag
                         if (memcmp(start, "RX:Z:", 5) == 0) {
                             segment.barcode = start + 5;
-                            segment.barcode_len = read - start - 5;
+                            segment.barcode_len = read - segment.barcode;
+                            segment.barcode2 = memchr(segment.barcode, '-', segment.barcode_len) + 1;
+                            segment.barcode2_len = read - segment.barcode2;
                             }
                         }
                 }
@@ -978,8 +999,8 @@ const char *cigar_op(const char *cigar, const char **op, int32_t *num) {
 
 
 void segment_fprintf(Segment segment, FILE *fp) {
-    fprintf(fp, "QNAME: %.*s\n", (int)segment.qname_len, segment.qname);
-    fprintf(fp, "FLAG: ");
+    fprintf(fp, "QNAME:    %.*s\n", (int)segment.qname_len, segment.qname);
+    fprintf(fp, "FLAG:    ");
     if (segment.flag & UNMAPPED) fprintf(fp, " UNMAPPED");
     if (segment.flag & MATE_UNMAPPED) fprintf(fp, " MATE_UNMAPPED");
     if (segment.flag & REVERSE) fprintf(fp, " REVERSE");
@@ -990,10 +1011,12 @@ void segment_fprintf(Segment segment, FILE *fp) {
     if (segment.flag & FILTERED) fprintf(fp, " FILTERED");
     if (segment.flag & SUPPPLEMENTARY) fprintf(fp, " SUPPPLEMENTARY");
     fprintf(fp, "\n");
-    fprintf(fp, "RNAME: %.*s\n", (int)segment.rname_len, segment.rname);
-    fprintf(fp, "POS:   %i\n", (int)segment.pos);
-    fprintf(fp, "CIGAR: %.*s\n", (int)segment.cigar_len, segment.cigar);
-    fprintf(fp, "SEQ:   %.*s\n", (int)segment.seq_len, segment.seq);
-    fprintf(fp, "QUAL:  %.*s\n", (int)segment.qual_len, segment.qual);
+    fprintf(fp, "RNAME:    %.*s\n", (int)segment.rname_len, segment.rname);
+    fprintf(fp, "POS:      %i\n", (int)segment.pos);
+    fprintf(fp, "CIGAR:    %.*s\n", (int)segment.cigar_len, segment.cigar);
+    fprintf(fp, "SEQ:      %.*s\n", (int)segment.seq_len, segment.seq);
+    fprintf(fp, "QUAL:     %.*s\n", (int)segment.qual_len, segment.qual);
+    if (segment.barcode != NULL) fprintf(fp, "BARCODE:  %.*s\n", (int)segment.barcode_len, segment.barcode);
+    if (segment.barcode2 != NULL) fprintf(fp, "BARCODE2: %.*s\n", (int)segment.barcode2_len, segment.barcode2);
     }
 

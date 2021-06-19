@@ -91,12 +91,11 @@ def execute(sam, expected, umi=None, min_family_size=1):
     cmd = ["./elduderino", "test.sam", "--output", "-", "--min-family-size", str(min_family_size)]
     if umi:
         cmd += ["--umi", umi]
-    completed = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, bufsize=1)
-    
-    if completed.returncode != 0:
-        sys.exit(completed.stderr)
-    
-    os.unlink("test.sam")
+        
+    try:
+        completed = subprocess.run(cmd, stdout=subprocess.PIPE, universal_newlines=True, bufsize=1)
+    finally:
+        os.unlink("test.sam")
     
     n = 7
     result = []
@@ -278,7 +277,7 @@ def main():
            Pair(Read("AAATTTT"),
                 Read("   TTTTCCC"), barcode="A")]
     expected = ["AAATTTT ~~~~~~~ - TTTTCCC ~~~~~~~ 2"]
-    execute(sam, expected)
+    execute(sam, expected, umi="prism")
     
     
     print("Different barcodes prism")
@@ -290,13 +289,13 @@ def main():
     execute(sam, expected, umi="prism")
     
     
-    print("Different barcodes thruplex")
+    print("Different barcodes thruplex_hv")
     sam = [Pair(Read("AAATTTT"),
                 Read("   TTTTCCC"), barcode="A"),
            Pair(Read("AAATTTT"),
                 Read("   TTTTCCC"), barcode="B")]
     expected = ["AAATTTT aaaaaaa - TTTTCCC aaaaaaa 1", "AAATTTT aaaaaaa - TTTTCCC aaaaaaa 1"]
-    execute(sam, expected, umi="thruplex")
+    execute(sam, expected, umi="thruplex_hv")
     
     
     print("Different barcodes 2")
@@ -338,6 +337,49 @@ def main():
     expected = ["AAATTTT ~~~~~~~ - TTTTCCC ~~~~~~~ 2"]
     execute(sam, expected)
     
+    
+    print("Same barcodes, thruplex")
+    sam = [Pair(Read("AAATTTT"),
+                Read("   TTTTCCC"), barcode="AAA-CCC"),
+           Pair(Read("AAATTTT"),
+                Read("   TTTTCCC"), barcode="AAA-CCC"),
+           Pair(Read("AAATTTT"),
+                Read("   TTTTCCC"), barcode="AAA-CCC")]
+    expected = ["AAATTTT ~~~~~~~ - TTTTCCC ~~~~~~~ 3"]
+    execute(sam, expected, umi="thruplex")
+    
+    
+    print("Thruplex 1")
+    sam = [Pair(Read("AAATTTT"),
+                Read("   TTTTCCC"), barcode="AAA-CCC"),
+           Pair(Read("AAATTTT"),
+                Read("   TTTTCCC"), barcode="TAA-CCC"),
+           Pair(Read("AAATTTT"),
+                Read("   TTTTCCC"), barcode="AAA-TCC")]
+    expected = ["AAATTTT ~~~~~~~ - TTTTCCC ~~~~~~~ 3"]
+    execute(sam, expected, umi="thruplex")
+    
+    
+    print("Thruplex 2")
+    sam = [Pair(Read("AAATTTT"),
+                Read("   TTTTCCC"), barcode="AAA-CCC"),
+           Pair(Read("AAATTTT"),
+                Read("   TTTTCCC"), barcode="TAA-GCC"),
+           Pair(Read("AAATTTT"),
+                Read("   TTTTCCC"), barcode="AAA-TCC")]
+    expected = ["AAATTTT ~~~~~~~ - TTTTCCC ~~~~~~~ 2", "AAATTTT aaaaaaa - TTTTCCC aaaaaaa 1"]
+    execute(sam, expected, umi="thruplex")
+    
+    
+    print("Thruplex 3")
+    sam = [Pair(Read("AAATTTT"),
+                Read("   TTTTCCC"), barcode="AAA-CCC"),
+           Pair(Read("AAATTTT"),
+                Read("   TTTTCCC"), barcode="TAA-GCC"),
+           Pair(Read("AAATTTT"),
+                Read("   TTTTCCC"), barcode="TAA-CCC")]
+    expected = ["AAATTTT ~~~~~~~ - TTTTCCC ~~~~~~~ 3"]
+    execute(sam, expected, umi="thruplex")
     
     
 
