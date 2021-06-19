@@ -12,8 +12,8 @@ typedef struct segment_t {
     const char *qname;
     const char *rname;
     const char *cigar;
-    const char *seq;
-    const char *qual;
+    char *seq;
+    char *qual;
     const char *barcode;
     const char *next;
     size_t len;
@@ -34,13 +34,18 @@ typedef struct readpair_t {
 
 
 typedef struct dedupe_t {
+    size_t min_family_size;
     FILE *output_file;
-    char *buffer;
-    size_t buffer_len;
+    char *interread_buffer; // used to create final deduplicated read
+    size_t interread_buffer_len;
+    char *intraread_buffer; // used to dedupe overlaps
+    size_t intraread_buffer_len;
+    ReadPair *readpairs; // used by dedupe_all to store readpair family members
+    size_t readpair_len;
     } Dedupe;
 
 
-typedef void (*dedupe_function_t)(Dedupe *dd, ReadPair *family, size_t family_size, size_t min_family_size);
+typedef void (*dedupe_function_t)(Dedupe *dd, ReadPair *family, size_t family_size);
 
 
 

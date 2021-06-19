@@ -62,7 +62,7 @@ def dedupe_process(input_queue, output_queue, stats_queue, dedupe_func, stats, *
         if output:
             output_queue.put(output)
     stats_queue.put(stats)
-    
+
 
 
 def filewriter_process(output_queue, output_file):
