@@ -1,5 +1,5 @@
 CC          = gcc
-CFLAGS      = -pg -Wall -O2
+CFLAGS      = -Wall -O2
 LDFLAGS     = -lz
 prefix      = /usr/local
 exec_prefix = $(prefix)/bin

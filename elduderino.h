@@ -44,6 +44,12 @@ typedef struct dedupe_t {
     size_t intraread_buffer_len;
     ReadPair *readpairs; // used by dedupe_all to store readpair family members
     size_t readpair_len;
+    size_t *family_sizes; // used to store family size statistics
+    size_t family_sizes_len;
+    float sequencing_total;
+    float sequencing_errors;
+    float pcr_total;
+    float pcr_errors;
     } Dedupe;
 
 
