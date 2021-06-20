@@ -367,7 +367,7 @@ void write_stats(const char *stats_filename, Dedupe *dd) {
             }
         }
     
-    fprintf(stats_file, "    \",family_sizes\": {");
+    fprintf(stats_file, "    ,\"family_sizes\": {");
     for (i = 1; i < dd->family_sizes_len + 1; ++i) {
         if (dd->family_sizes[i]) {
             if (i > 1) {
