@@ -324,11 +324,14 @@ int main (int argc, char **argv) {
 
 void write_stats(const char *stats_filename, Dedupe *dd) {
     FILE *stats_file = NULL;
-    size_t total_reads = 0, total_families = 0, i = 0, dups = 0, trips = 0, quads = 0;
+    size_t total_reads = 0, total_families = 0, i = 0, dups = 0, trips = 0, quads = 0, singles = 0;
     
     for (i = 1; i < dd->family_sizes_len + 1; ++i) {
         total_families += dd->family_sizes[i];
         total_reads += i *  dd->family_sizes[i];
+        if (i == 1) {
+            singles += dd->family_sizes[i];
+            }
         if (i > 1) {
             dups += (i - 1) * dd->family_sizes[i];
             }
@@ -378,6 +381,7 @@ void write_stats(const char *stats_filename, Dedupe *dd) {
         }
     fprintf(stats_file, "\n    },\n");
     fprintf(stats_file, "    \"mean_family_size\": %.2f,\n", (float)total_reads / total_families);
+    fprintf(stats_file, "    \"singleton_rate\": %.2f,\n", (float)singles / total_reads);
     fprintf(stats_file, "    \"duplicate_rate\": %.2f,\n", (float)dups / total_reads);
     fprintf(stats_file, "    \"triplicate_plus_rate\": %.2f,\n", (float)trips / total_reads);
     fprintf(stats_file, "    \"quadruplicate_plus_rate\": %.2f,\n", (float)quads / total_reads);
