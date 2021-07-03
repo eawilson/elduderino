@@ -868,7 +868,7 @@ void dedupe_family(Dedupe *dd, ReadPair *family, size_t family_size) {
         
         // write to file
         if (family_size >= dd->min_family_size) {
-            fprintf(dd->output_file, "%.*s XF:i:%i\n%.*s\n+\n%.*s\n", (int)family->segment[read].qname_len, family->segment[read].qname,
+            fprintf(dd->output_file, "@%.*s XF:i:%i\n%.*s\n+\n%.*s\n", (int)family->segment[read].qname_len, family->segment[read].qname,
                                                                       (int)family_size, 
                                                                       (int)len, seq_buffer,
                                                                       (int)len, qual_buffer);
