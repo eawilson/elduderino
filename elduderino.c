@@ -324,6 +324,7 @@ int main (int argc, char **argv) {
 
 void write_stats(const char *stats_filename, Dedupe *dd) {
     FILE *stats_file = NULL;
+    char ch = '\0';
     size_t total_reads = 0, total_families = 0, i = 0, dups = 0, trips = 0, quads = 0, singles = 0;
     
     for (i = 1; i < dd->family_sizes_len + 1; ++i) {
@@ -353,24 +354,26 @@ void write_stats(const char *stats_filename, Dedupe *dd) {
     else {
         fseek(stats_file, 0, SEEK_END);
         if (ftell(stats_file) == 0) {
-            fprintf(stats_file, "{\n");
+            fprintf(stats_file, "{}\n");
             }
-        else {
-            fseek(stats_file, -1, SEEK_CUR);
-            while (true) {
-                if (fgetc(stats_file) == '}') {
-                    fseek(stats_file, -1, SEEK_CUR);
-                    break;
+        
+        fseek(stats_file, -1, SEEK_CUR);
+        while (true) {
+            ch = fgetc(stats_file);
+            if (ch != '}' && ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r') {
+                if (ch != '{') {
+                    fprintf(stats_file, ",");
                     }
-                if (fseek(stats_file, -2, SEEK_CUR) == -1) {
-                    fprintf(stderr, "Error: Malformed stats file\n");
-                    exit(EXIT_FAILURE);
-                    }
+                break;
+                }
+            if (fseek(stats_file, -2, SEEK_CUR) == -1) {
+                fprintf(stderr, "Error: Malformed stats file\n");
+                exit(EXIT_FAILURE);
                 }
             }
         }
     
-    fprintf(stats_file, "    ,\"family_sizes\": {");
+    fprintf(stats_file, "\n    \"family_sizes\": {");
     for (i = 1; i < dd->family_sizes_len + 1; ++i) {
         if (dd->family_sizes[i]) {
             if (i > 1) {
