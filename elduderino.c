@@ -361,7 +361,7 @@ void write_stats(const char *stats_filename, Dedupe *dd) {
         fseek(stats_file, -1, SEEK_CUR);
         while (true) {
             ch = fgetc(stats_file);
-            if (!isspace(ch)) {
+            if (ch != '}' && !isspace(ch)) {
                 if (ch != '{') {
                     fprintf(stats_file, ",");
                     }
