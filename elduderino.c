@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <limits.h>
 #include <getopt.h>
+#include <ctype.h>
 #include <errno.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -360,7 +361,7 @@ void write_stats(const char *stats_filename, Dedupe *dd) {
         fseek(stats_file, -1, SEEK_CUR);
         while (true) {
             ch = fgetc(stats_file);
-            if (ch != '}' && ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r') {
+            if (!isspace(ch)) {
                 if (ch != '{') {
                     fprintf(stats_file, ",");
                     }
