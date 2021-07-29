@@ -42,6 +42,7 @@ void segment_fprintf(Segment segment, FILE *fp);
 int32_t cigar_len(const char *cigar, size_t cigar_len, const char *ops);
 int cmp_cigars(const void *p1, const void *p2);
 int cmp_barcodes(const void *p1, const void *p2);
+int cmp_qnames(const void *p1, const void *p2);
 void dedupe_all(Dedupe *dd, MashTable *paired, dedupe_function_t dedupe_function);
 void barcode_families(Dedupe *dd, ReadPair *family, size_t family_size);
 void connor_families(Dedupe *dd, ReadPair *family, size_t family_size);
@@ -126,10 +127,10 @@ int main (int argc, char **argv) {
                 if (strcmp(optarg, "thruplex") == 0) {
                     dedupe_function = connor_families;
                     }
-               else if (strcmp(optarg, "thruplex_hv") == 0 || strcmp(optarg, "prism") == 0) {
+                else if (strcmp(optarg, "thruplex_hv") == 0 || strcmp(optarg, "prism") == 0) {
                     dedupe_function = barcode_families;
                     }
-                else {
+                else if (strcmp(optarg, "") != 0) {
                     fprintf(stderr, "Error: Unsupported umi type: %s\n", optarg);
                     exit(EXIT_FAILURE);
                     }
@@ -915,6 +916,19 @@ void reversecomplement(char *start, int len) {
     if (start == end) {
         *start = reversebase(*end);
         }
+    }
+
+
+
+int cmp_qnames(const void *p1, const void *p2) {
+    Segment *r1 = (Segment *)p1, *r2 = (Segment *)p2;
+    size_t min_len = r1->qname_len < r2->qname_len ? r1->qname_len : r2->qname_len;
+    int ret = memcmp(r1->qname, r2->qname, min_len);
+    
+    if (ret == 0) {
+        ret = r1->qname_len - r2->qname_len;
+        }
+    return ret;
     }
 
 

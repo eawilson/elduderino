@@ -35,6 +35,13 @@ typedef struct readpair_t {
     } ReadPair;
 
 
+typedef struct optical_t {
+    size_t irflt_len; // length of <instrument>:<run number>:<flowcell ID>:<lane>:<tile>:in illumina qname
+    int x;
+    int y;
+    } Optical;
+
+
 typedef struct dedupe_t {
     size_t min_family_size;
     FILE *output_file;
@@ -44,6 +51,9 @@ typedef struct dedupe_t {
     size_t intraread_buffer_len;
     ReadPair *readpairs; // used by dedupe_all to store readpair family members
     size_t readpair_len;
+    Optical *opticals; // used by dedupe_optical to store flowcell position
+    size_t optical_len;
+    
     size_t *family_sizes; // used to store family size statistics
     size_t family_sizes_len;
     float sequencing_total;
