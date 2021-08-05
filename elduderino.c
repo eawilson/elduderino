@@ -553,8 +553,12 @@ void cigar_family(Dedupe *dd, ReadPair *family, size_t family_size) {
 void dedupe_optical(Dedupe *dd, ReadPair *family, size_t family_size) {
     
     
-    
-    
+    if (family_size > dd->optical_len) {
+        if ((dd->opticals = realloc(dd->opticals, (family_size + 1) * sizeof(Optical))) == NULL) {
+            fprintf(stderr, "Error: Unable to allocate memory for optical_buffer\n");
+            exit(EXIT_FAILURE);
+            }
+        }    
     
     
     

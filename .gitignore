@@ -3,3 +3,4 @@ elduderino
 *.out
 *.txt
 *.fastq
+*.fastq.gz
