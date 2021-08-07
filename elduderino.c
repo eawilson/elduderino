@@ -37,7 +37,7 @@ const char *CONSUMES_READ = "MIS=X";
 
 
 bool endswith(const char *text, const char *suffix);
-Segment parse_segment(const char *sam, const char *sam_end);
+const char *parse_segment(const char *sam, const char *sam_end, Segment *segment);
 void segment_fprintf(Segment segment, FILE *fp);
 int32_t cigar_len(const char *cigar, size_t cigar_len, const char *ops);
 int cmp_cigars(const void *p1, const void *p2);
@@ -190,8 +190,7 @@ int main (int argc, char **argv) {
         }
     
     for (;sam < sam_end; sam = next) {
-        segment = parse_segment(sam, sam_end);
-        next = segment.next;
+        next = parse_segment(sam, sam_end, &segment);
         // Sanity check to ensure that sam file is sorted by position
         if (segment.rname_len == sort_check_rname_len && memcmp(segment.rname, sort_check_rname, sort_check_rname_len) == 0) {
             if (segment.pos < sort_check_pos) {
@@ -216,7 +215,7 @@ int main (int argc, char **argv) {
             continue;
             }
         
-        mate_segment = parse_segment(mate, mate + len);
+        parse_segment(mate, mate + len, &mate_segment);
         
         // This is needed as an unmapped read may be positioned before or after its mate depending
         // on the value of the REVERSE flag in a sorted sam
@@ -688,7 +687,7 @@ void trim_family(Dedupe *dd, ReadPair *family, size_t family_size) {
                     family[i].segment[j].seq = intraread_buffer;
                     intraread_buffer += max_len;
 
-                    memcpy(intraread_buffer, family[i].segment[j].qual, family[i].segment[j].qual_len);
+                    memcpy(intraread_buffer, family[i].segment[j].qual, family[i].segment[j].seq_len);
                     family[i].segment[j].qual = intraread_buffer;
                     intraread_buffer += max_len;
                     }
@@ -725,7 +724,6 @@ void trim_family(Dedupe *dd, ReadPair *family, size_t family_size) {
                     family[i].segment[r].seq -= lread;
                     family[i].segment[r].seq_len += lread;
                     family[i].segment[r].qual -= lread;
-                    family[i].segment[r].qual_len += lread;
                     }
                 lread = 0;
                 }
@@ -738,7 +736,6 @@ void trim_family(Dedupe *dd, ReadPair *family, size_t family_size) {
                 overhang = rread - family->segment[r].seq_len + 1;
                 for (i = 0; i < family_size; ++i) {
                     family[i].segment[l].seq_len -= overhang;
-                    family[i].segment[l].qual_len -= overhang;
                     }
                 rread = family->segment[r].seq_len - 1;
                 }
@@ -975,22 +972,20 @@ int cmp_cigars(const void *p1, const void *p2) {
 
 
 
-Segment parse_segment(const char *read, const char *sam_end) {
-    Segment segment;
+const char *parse_segment(const char *read, const char *sam_end, Segment *segment) {
     int column = 0;
     const char *start = NULL, *endptr = NULL, *beginning = read;
     long val = 0;
     
-    segment.start = read;
-    segment.barcode = NULL; // optional field so must be initialised
-    segment.barcode2 = NULL; // optional field so must be initialised
-    segment.barcode_len = 0; // optional field so must be initialised
+    segment->barcode = NULL; // optional field so must be initialised
+    segment->barcode2 = NULL; // optional field so must be initialised
+    segment->barcode_len = 0; // optional field so must be initialised
     for (start = read; read < sam_end; ++read) {
         if (*read == '\t' || *read == '\n') {
             switch (++column) {
                 case 1: // qname
-                    segment.qname = start;
-                    segment.qname_len = read - start;
+                    segment->qname = start;
+                    segment->qname_len = read - start;
                     break;
                 case 2: // flag
                     errno = 0;
@@ -999,11 +994,11 @@ Segment parse_segment(const char *read, const char *sam_end) {
                         fprintf(stderr, "Error: Invalid flag in sam file\n");
                         exit(EXIT_FAILURE);
                         }
-                    segment.flag = (uint16_t)val;
+                    segment->flag = (uint16_t)val;
                     break;
                 case 3: // rname
-                    segment.rname = start;
-                    segment.rname_len = read - start;
+                    segment->rname = start;
+                    segment->rname_len = read - start;
                     break;
                 case 4: // pos
                     errno = 0;
@@ -1012,34 +1007,37 @@ Segment parse_segment(const char *read, const char *sam_end) {
                         fprintf(stderr, "Error: Invalid pos in sam file\n");
                         exit(EXIT_FAILURE);
                         }
-                    segment.pos = (int32_t)val;
+                    segment->pos = (int32_t)val;
                     break;
                 case 6: // cigar
-                    segment.cigar = start;
-                    segment.cigar_len = read - start;
+                    segment->cigar = start;
+                    segment->cigar_len = read - start;
                     break;
                 case 10: // seq
-                    segment.seq = (char *)start;
-                    segment.seq_len = read - start;
+                    segment->seq = (char *)start;
+                    segment->seq_len = read - start;
                     break;
                 case 11: // qual
-                    segment.qual = (char *)start;
-                    segment.qual_len = read - start;
+                    segment->qual = (char *)start;
+                    // seq and qual must be the same length
+                    if (segment->seq_len != read - start) {
+                        fprintf(stderr, "Error: Sequence and quality differ in length\n");
+                        exit(EXIT_FAILURE);
+                        }
                     break;
                 default:
                     if (column > 11) { // barcode tag
                         if (memcmp(start, "RX:Z:", 5) == 0) {
-                            segment.barcode = start + 5;
-                            segment.barcode_len = read - segment.barcode;
-                            segment.barcode2 = memchr(segment.barcode, '-', segment.barcode_len) + 1;
-                            segment.barcode2_len = read - segment.barcode2;
+                            segment->barcode = start + 5;
+                            segment->barcode_len = read - segment->barcode;
+                            segment->barcode2 = memchr(segment->barcode, '-', segment->barcode_len) + 1;
+                            segment->barcode2_len = read - segment->barcode2;
                             }
                         }
                 }
             start = read + 1;
             if (*read == '\n') {
-                segment.len = read - beginning + 1; // includes final \n
-                segment.next = read + 1;
+                segment->len = read - beginning + 1; // includes final \n
                 break;
                 }
             }
@@ -1049,19 +1047,14 @@ Segment parse_segment(const char *read, const char *sam_end) {
         exit(EXIT_FAILURE);
         }
     
-    // seq and qual must be the same length
-    if (segment.seq_len != segment.qual_len) {
-        fprintf(stderr, "Error: Sequence and quality differ in length\n");
-        exit(EXIT_FAILURE);
-        }
     
     // seq and cigar must be the same length except for unmapped segment (cigar = *)
-    if (memcmp(segment.cigar, "*\t", 2) != 0 && segment.seq_len != cigar_len(segment.cigar, segment.cigar_len, CONSUMES_READ)) {
+    if (memcmp(segment->cigar, "*\t", 2) != 0 && segment->seq_len != cigar_len(segment->cigar, segment->cigar_len, CONSUMES_READ)) {
         fprintf(stderr, "Error: Sequence and cigar differ in length\n");
         exit(EXIT_FAILURE);
         }
     
-    return segment;
+    return read + 1;
     }
 
 
@@ -1139,7 +1132,7 @@ void segment_fprintf(Segment segment, FILE *fp) {
     fprintf(fp, "POS:      %i\n", (int)segment.pos);
     fprintf(fp, "CIGAR:    %.*s\n", (int)segment.cigar_len, segment.cigar);
     fprintf(fp, "SEQ:      %.*s\n", (int)segment.seq_len, segment.seq);
-    fprintf(fp, "QUAL:     %.*s\n", (int)segment.qual_len, segment.qual);
+    fprintf(fp, "QUAL:     %.*s\n", (int)segment.seq_len, segment.qual);
     if (segment.barcode != NULL) fprintf(fp, "BARCODE:  %.*s\n", (int)segment.barcode_len, segment.barcode);
     if (segment.barcode2 != NULL) fprintf(fp, "BARCODE2: %.*s\n", (int)segment.barcode2_len, segment.barcode2);
     }

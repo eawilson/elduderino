@@ -8,7 +8,6 @@
 
 
 typedef struct segment_t {
-    const char *start;
     const char *qname;
     const char *rname;
     const char *cigar;
@@ -16,13 +15,11 @@ typedef struct segment_t {
     char *qual;
     const char *barcode;
     const char *barcode2;
-    const char *next;
     size_t len;
     size_t qname_len;
     size_t rname_len;
     size_t cigar_len;
     size_t seq_len;
-    size_t qual_len;
     size_t barcode_len;
     size_t barcode2_len;
     int32_t pos; // Max size 2^31 - 1 according to sam specifications
