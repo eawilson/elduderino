@@ -29,27 +29,20 @@ typedef struct segment_t {
 
 typedef struct readpair_t {
     Segment segment[2];
+    size_t irflt_len; // length of <instrument>:<run number>:<flowcell ID>:<lane>:<tile>: in illumina qname
+    int optical_x;
+    int optical_y;
     } ReadPair;
-
-
-typedef struct optical_t {
-    size_t irflt_len; // length of <instrument>:<run number>:<flowcell ID>:<lane>:<tile>:in illumina qname
-    int x;
-    int y;
-    } Optical;
 
 
 typedef struct dedupe_t {
     size_t min_family_size;
     FILE *output_file;
-    char *interread_buffer; // used to create final deduplicated read
-    size_t interread_buffer_len;
-    char *intraread_buffer; // used to dedupe overlaps
-    size_t intraread_buffer_len;
+    char *buffer; // writable buffer to store seq and qual that may be modified
+    size_t buffer_len;
     ReadPair *readpairs; // used by dedupe_all to store readpair family members
     size_t readpair_len;
-    Optical *opticals; // used by dedupe_optical to store flowcell position
-    size_t optical_len;
+    int optical_duplicate_distance;
     
     size_t *family_sizes; // used to store family size statistics
     size_t family_sizes_len;

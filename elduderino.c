@@ -34,7 +34,7 @@ const uint16_t READX = 0x40 | 0x80; // READ1 | READ2;
 
 const char *CONSUMES_REF = "MDN=X";
 const char *CONSUMES_READ = "MIS=X";
-
+const char *bases = "ACGTN";
 
 bool endswith(const char *text, const char *suffix);
 const char *parse_segment(const char *sam, const char *sam_end, Segment *segment);
@@ -43,12 +43,16 @@ int32_t cigar_len(const char *cigar, size_t cigar_len, const char *ops);
 int cmp_cigars(const void *p1, const void *p2);
 int cmp_barcodes(const void *p1, const void *p2);
 int cmp_qnames(const void *p1, const void *p2);
+int cmp_irflts(const void *p1, const void *p2);
 void dedupe_all(Dedupe *dd, MashTable *paired, dedupe_function_t dedupe_function);
+void copy_sequence_to_buffer(Dedupe *dd, ReadPair *family, size_t family_size);
 void barcode_families(Dedupe *dd, ReadPair *family, size_t family_size);
 void connor_families(Dedupe *dd, ReadPair *family, size_t family_size);
 void cigar_family(Dedupe *dd, ReadPair *family, size_t family_size);
+void tile_families(Dedupe *dd, ReadPair *family, size_t family_size);
+size_t coordinate_families(Dedupe *dd, ReadPair *family, size_t family_size);
 void dedupe_optical(Dedupe *dd, ReadPair *family, size_t family_size);
-void dedupe_family(Dedupe *dd, ReadPair *family, size_t family_size);
+void dedupe_pcr(Dedupe *dd, ReadPair *family, size_t family_size);
 void trim_family(Dedupe *dd, ReadPair *family, size_t family_size);
 int base(char base);
 void reverse(char *start, int len);
@@ -90,11 +94,12 @@ int main (int argc, char **argv) {
                                            {"stats", required_argument, 0, 's'},
                                            {"umi", required_argument, 0, 'u'},
                                            {"min-family-size", required_argument, 0, 'm'},
+                                           {"optical-duplicate-distance", required_argument, 0, 'p'},
                                            {0, 0, 0, 0}};
 
     // Parse optional arguments
     while (c != -1) {
-        c = getopt_long(argc, argv, "o:s:u:m:", long_options, &option_index);
+        c = getopt_long(argc, argv, "o:s:u:m:p:", long_options, &option_index);
 
         switch (c) {
             case 'o':
@@ -121,6 +126,16 @@ int main (int argc, char **argv) {
                     exit(EXIT_FAILURE);
                     }
                 dd.min_family_size = (size_t)val;
+                break;                
+                
+            case 'p':
+                errno = 0;
+                val = strtol(optarg, &endptr, 10);
+                if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0) || (endptr == optarg) || val > INT_MAX - 1) {
+                    fprintf(stderr, "Error: Invalid --optical-duplicate-distance\n");
+                    exit(EXIT_FAILURE);
+                    }
+                dd.optical_duplicate_distance = (int)val + 1;
                 break;                
                 
             case 'u':
@@ -249,7 +264,7 @@ int main (int argc, char **argv) {
         // 2 x max number of decimal digits in an int32 (10 digits) + 
         // max number of decimal digits in a uint16 (5 digits) +
         // 4 x '\t' field separators +
-        // terminal '\0'
+        // terminal '\0' = 30
         position_len = mate_segment.rname_len + segment.rname_len + 30;
         if (position_len > max_position_len) {
             if ((position = realloc(position, position_len)) == NULL) {
@@ -408,6 +423,7 @@ void dedupe_all(Dedupe *dd, MashTable *paired, dedupe_function_t dedupe_function
         data = mash_popall(paired, (const void **)&key, &key_size, &data_size, &bucket);
         if (data == NULL || key_size != previous_key_len || memcmp(previous_key, key, previous_key_len) != 0) {
             if (readpair_len > 0) {
+                copy_sequence_to_buffer(dd, dd->readpairs, readpair_len);
                 dedupe_function(dd, dd->readpairs, readpair_len);
                 readpair_len = 0;
                 }
@@ -544,27 +560,227 @@ void cigar_family(Dedupe *dd, ReadPair *family, size_t family_size) {
                 }
             }
         }
+    copy_sequence_to_buffer(dd, family, family_size);
+    if (dd->optical_duplicate_distance > 0) {
+        tile_families(dd, family, family_size);
+        }
+    else {
+        trim_family(dd, family, family_size);
+        }
+    }
+
+
+
+void copy_sequence_to_buffer(Dedupe *dd, ReadPair *family, size_t family_size) {
+    size_t max_seq_len = 0, required_len = 0;
+    int i = 0, j = 0;
+    char *buffer = NULL;
+    
+    // Cigars should have already been checked and be identical for all family members, therefore seq_len must also be the same
+    max_seq_len = family->segment[0].seq_len > family->segment[0].seq_len ? family->segment[0].seq_len : family->segment[1].seq_len;
+    
+    if ((required_len = max_seq_len * 4 * family_size) > dd->buffer_len) {
+        free(dd->buffer);
+        if ((dd->buffer = malloc(required_len)) == NULL) {
+            fprintf(stderr, "Error: Unable to allocate memory for sequence buffer\n");
+            exit(EXIT_FAILURE);
+            }
+        dd->buffer_len = required_len;
+        }
+    
+    buffer = dd->buffer;
+    for (i = 0; i < family_size; ++i) {
+        for (j = 0; j < 2; ++j) {
+            memcpy(buffer, family[i].segment[j].seq, family[i].segment[j].seq_len);
+            family[i].segment[j].seq = buffer;
+            buffer += max_seq_len;
+            memcpy(buffer, family[i].segment[j].qual, family[i].segment[j].seq_len);
+            family[i].segment[j].qual = buffer;
+            buffer += max_seq_len;
+            }
+        }
+    }
+
+
+
+void tile_families(Dedupe *dd, ReadPair *family, size_t family_size) {
+    int colon_count = 0;
+    size_t i = 0, j = 0, sub_family_size = 1, removed = 0;
+    ReadPair *sub_family = family;
+
+    for (i = 0; i < family_size; ++i) {
+        colon_count = 0;
+        for (j = 0; j < family[i].segment[0].qname_len; ++j) {
+            if (family[i].segment[0].qname[j] == ':' && ++colon_count == 5) {
+                family[i].irflt_len = j;
+                break;
+                }
+            }
+        if (colon_count != 5) {
+            fprintf(stderr, "Error: Invalid illumina read name\n");
+            exit(EXIT_FAILURE);
+            }
+        }
+    
+    qsort(family, family_size, sizeof(ReadPair), cmp_irflts);
+    
+    for (i = 1;; ++i) {
+        if (i == family_size || cmp_irflts(sub_family, family + i) != 0) {
+            
+            if (sub_family_size > 1) {
+                if ((removed = coordinate_families(dd, sub_family, sub_family_size)) > 0) {
+                    memmove(family + i - removed, family + i, (family_size - i) * sizeof(ReadPair));
+                    i -= removed;
+                    family_size -= removed;
+                    }
+                 }
+            
+            if (i == family_size) {
+                break;
+                }
+            
+            sub_family = family + i;
+            sub_family_size = 1;
+            }
+        else {
+            ++sub_family_size;
+            }
+        }
+    
     trim_family(dd, family, family_size);
     }
 
 
 
-void dedupe_optical(Dedupe *dd, ReadPair *family, size_t family_size) {
+size_t coordinate_families(Dedupe *dd, ReadPair *family, size_t family_size) {
+    // This function will only be called if there are at least two tile family members
     
-    
-    if (family_size > dd->optical_len) {
-        if ((dd->opticals = realloc(dd->opticals, (family_size + 1) * sizeof(Optical))) == NULL) {
-            fprintf(stderr, "Error: Unable to allocate memory for optical_buffer\n");
+    size_t sub_family_size = 1, removed = 0;
+    int i = 0, j = 0;
+    long val;
+    bool changed = false;
+    const char *endptr = NULL, *coordinate = NULL;
+    ReadPair swap_readpair = {0};
+
+    for (i = 0; i < family_size; ++i) {
+        coordinate = family[i].segment[0].qname + family[i].irflt_len + 1;
+        val = strtol(coordinate, (char **)&endptr, 10);
+        if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0) || (endptr == coordinate)) {
+            fprintf(stderr, "Error: Invalid illumina read name x coordinate\n");
             exit(EXIT_FAILURE);
             }
-        }    
+        family[i].optical_x = (int)val;
+
+        coordinate = endptr + 1;
+        val = strtol(coordinate, (char **)&endptr, 10);
+        if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0) || (endptr == coordinate)) {
+            fprintf(stderr, "Error: Invalid illumina read name y coordinate\n");
+            exit(EXIT_FAILURE);
+            }
+        family[i].optical_y = (int)val;
+        
+        //fprintf(stderr, "%i %i\n", sub_family[i].optical_x, sub_family[i].optical_y);
+        }
+    //fprintf(stderr, "\n");
     
+
+    for (; family_size > 0; family_size -= sub_family_size) {
+        sub_family_size = 1;
+        do {
+            changed = false;
+            for (i = sub_family_size; i < family_size; ++i) {
+                for (j = 0; j < sub_family_size; ++j) {
+                    if (abs(family[i].optical_x - family[j].optical_x) < dd->optical_duplicate_distance || 
+                        abs(family[i].optical_y - family[j].optical_y) < dd->optical_duplicate_distance) {
+                        if (i > sub_family_size) {
+                            swap_readpair = family[sub_family_size];
+                            family[sub_family_size] = family[i];
+                            family[i] = swap_readpair;
+                            }
+                        ++sub_family_size;
+                        changed = true;
+                        break;
+                        }
+                    }
+                }    
+            } while (changed);        
+        
+        if (sub_family_size > 1) {
+            dedupe_optical(dd, family, sub_family_size);
+            removed += sub_family_size - 1;
+            memmove(family + sub_family_size, family + 1, (sub_family_size - 1) * sizeof(ReadPair));
+            }
+        family += 1;
+        }
     
+    return removed;
+    }
+
+
+
+void dedupe_optical(Dedupe *dd, ReadPair *family, size_t family_size) {
+    size_t seq_len = 0, sixty_percent_family_size = 0;
+    int read = 0, counts[5] = {0}, quals[5] = {0}, b = 0, q = 0, winner = 0, i = 0, j = 0;
+    Segment *first = NULL, *second = NULL;
     
-    
-    
-    
-    
+    if (family_size == 2) {
+        for (read = 0; read < 2; ++read) {
+            first = &family[0].segment[read];
+            second = &family[1].segment[read];
+            // seq_len will be the same for both reads as they have identical cigars
+            seq_len = first->seq_len;
+            for (i = 0; i < seq_len; ++i) {
+                // Only correct the first read as this is the one we are going to keep
+                if (first->seq[i] != second->seq[i]) {
+                    if (second->qual[i] > first->qual[i] + 10) {
+                        first->seq[i] = second->seq[i];
+                        first->qual[i] = second->qual[i];
+                        }
+                    else if (first->qual[i] <= second->qual[i] + 10) {
+                        first->seq[i] = 'N';
+                        first->qual[i] = '!';
+                        }
+                    }
+                }
+            }
+        }
+    else {
+        sixty_percent_family_size = ((family_size * 6) / 10) + !!((family_size * 6) % 10);
+        
+        for (read = 0; read < 2; ++read) {
+            // seq_len will be the same for all reads as they have identical cigars
+            seq_len = family[0].segment[read].seq_len;
+            for (i = 0; i < seq_len; ++i) {
+                memset(counts, 0, 5 * sizeof(int));
+                memset(quals, 0, 5 * sizeof(int));
+                
+                for (j = 0; j < family_size; ++j) {
+                    b = base(family[j].segment[read].seq[i]);
+                    ++counts[b];
+                    if ((q = family[j].segment[read].qual[i] - 33) > quals[b]) {
+                        quals[b] = q;
+                        }
+                    }
+                quals[4] = 0;
+                
+                winner = 0;
+                for (b = 1; b < 4; ++b) {
+                    if (counts[b] > counts[winner]) {
+                        winner = b;
+                        }
+                    }
+                
+                if (counts[winner] >= sixty_percent_family_size) {
+                    family[0].segment[read].seq[i] = bases[winner];
+                    family[0].segment[read].qual[i] = quals[winner] + 33;
+                    }
+                else {
+                    family[0].segment[read].seq[i] = 'N';
+                    family[0].segment[read].qual[i] = '!';
+                    }
+                }
+            }
+        }
     }
 
 
@@ -617,8 +833,6 @@ void trim_family(Dedupe *dd, ReadPair *family, size_t family_size) {
     int32_t lref = 0, rref = 0, lread = 0, rread = 0, num = 0;
     int i = 0, j = 0, l = 0, r = 1, swap = 0, overhang = 0, mismatches = 0;
     const char *cigar = NULL, *cigar_end = NULL, *op = NULL;
-    size_t max_len = 0, intraread_buffer_len = 0;
-    char *intraread_buffer = NULL;
     
     // Mappend to the same reference and pointing in different directions therefore may be a concordant pair
     // otherwise skip
@@ -660,39 +874,6 @@ void trim_family(Dedupe *dd, ReadPair *family, size_t family_size) {
             }
         
         if (lref == rref) {
-            
-            // len will be the same for all family members.
-            for (i = 0; i < family_size; ++i) {
-                for (j = 0; j < 2; ++j) {
-                    if (family[i].segment[j].seq_len > max_len) {
-                        max_len = family[i].segment[j].seq_len;
-                        }
-                    }
-                }
-            intraread_buffer_len = max_len * 4 * family_size;
-            
-            if (intraread_buffer_len > dd->intraread_buffer_len) {
-                free(dd->intraread_buffer);
-                if ((dd->intraread_buffer = malloc(intraread_buffer_len)) == NULL) {
-                    fprintf(stderr, "Error: Unable to allocate memory for intraread buffer\n");
-                    exit(EXIT_FAILURE);
-                    }
-                dd->intraread_buffer_len = intraread_buffer_len;
-                }
-            
-            intraread_buffer = dd->intraread_buffer;
-            for (i = 0; i < family_size; ++i) {
-                for (j = 0; j < 2; ++j) {
-                    memcpy(intraread_buffer, family[i].segment[j].seq, family[i].segment[j].seq_len);
-                    family[i].segment[j].seq = intraread_buffer;
-                    intraread_buffer += max_len;
-
-                    memcpy(intraread_buffer, family[i].segment[j].qual, family[i].segment[j].seq_len);
-                    family[i].segment[j].qual = intraread_buffer;
-                    intraread_buffer += max_len;
-                    }
-                }
-                    
             cigar = family->segment[r].cigar;
             cigar_end = cigar + family->segment[r].cigar_len;
             for (; cigar < cigar_end;) {
@@ -767,14 +948,14 @@ void trim_family(Dedupe *dd, ReadPair *family, size_t family_size) {
             }
         }
 
-    dedupe_family(dd, family, family_size);
+    dedupe_pcr(dd, family, family_size);
    }
 
 
 
-void dedupe_family(Dedupe *dd, ReadPair *family, size_t family_size) {
+void dedupe_pcr(Dedupe *dd, ReadPair *family, size_t family_size) {
     size_t sixty_percent_family_size = 0, len = 0;
-    char *bases = "ACGTN", *seq_buffer = NULL, *qual_buffer = NULL;
+    char *corrected_seq = NULL, *corrected_qual = NULL;
     int i = 0, j = 0, counts[5] = {0}, quals[5] = {0}, r = 0, r1r2[2] = {0}, read = 0, b = 0, q = 0, qual = 0, winner = 0, mismatches = 0, total = 0;
     
     
@@ -798,24 +979,12 @@ void dedupe_family(Dedupe *dd, ReadPair *family, size_t family_size) {
         read = r1r2[r];
         
         // len will be the same for all family members.
-        len = family->segment[read].seq_len;
-        if (len * 2 > dd->interread_buffer_len) {
-            free(dd->interread_buffer);
-            if ((dd->interread_buffer = malloc((2 * len))) == NULL) {
-                fprintf(stderr, "Error: Unable to allocate memory for deduplication buffer\n");
-                exit(EXIT_FAILURE);
-                }
-            dd->interread_buffer_len = len * 2;
-            }
-        seq_buffer = dd->interread_buffer;
-        qual_buffer = dd->interread_buffer + len;
-
+        len = family[0].segment[read].seq_len;
+        // Write corrected data to the first family member
+        corrected_seq = family[0].segment[read].seq;
+        corrected_qual = family[0].segment[read].qual;
         
-        if (family_size == 1 || (family->segment[read].flag & UNMAPPED)) {
-            memcpy(seq_buffer, family->segment[read].seq, len);
-            memcpy(qual_buffer, family->segment[read].qual, len);
-            }
-        else {
+        if (family_size > 1 && !(family->segment[read].flag & UNMAPPED)) {
             for (i = 0; i < len; ++i) {
                 memset(counts, 0, 5 * sizeof(int));
                 memset(quals, 0, 5 * sizeof(int));
@@ -858,12 +1027,12 @@ void dedupe_family(Dedupe *dd, ReadPair *family, size_t family_size) {
                         qual = 93;
                         }
                     
-                    seq_buffer[i] = bases[winner];
-                    qual_buffer[i] = qual + 33;
+                    corrected_seq[i] = bases[winner];
+                    corrected_qual[i] = qual + 33;
                     }
                 else {
-                    seq_buffer[i] = 'N';
-                    qual_buffer[i] = '!';
+                    corrected_seq[i] = 'N';
+                    corrected_qual[i] = '!';
                     }
                 }
             
@@ -872,16 +1041,16 @@ void dedupe_family(Dedupe *dd, ReadPair *family, size_t family_size) {
             }
         
         if (family->segment[read].flag & REVERSE) {
-            reversecomplement(seq_buffer, len);
-            reverse(qual_buffer, len);
+            reversecomplement(corrected_seq, len);
+            reverse(corrected_qual, len);
             }
         
         // write to file
         if (family_size >= dd->min_family_size) {
             fprintf(dd->output_file, "@%.*s XF:i:%i\n%.*s\n+\n%.*s\n", (int)family->segment[read].qname_len, family->segment[read].qname,
                                                                       (int)family_size, 
-                                                                      (int)len, seq_buffer,
-                                                                      (int)len, qual_buffer);
+                                                                      (int)len, corrected_seq,
+                                                                      (int)len, corrected_qual);
             }
         }
     }
@@ -922,12 +1091,25 @@ void reversecomplement(char *start, int len) {
 
 
 int cmp_qnames(const void *p1, const void *p2) {
-    Segment *r1 = (Segment *)p1, *r2 = (Segment *)p2;
-    size_t min_len = r1->qname_len < r2->qname_len ? r1->qname_len : r2->qname_len;
-    int ret = memcmp(r1->qname, r2->qname, min_len);
+    // qnames of both reads in pair will be identical, therefore just compare segment[0]
+    Segment *s1 = (Segment *)p1, *s2 = (Segment *)p2;
+    size_t min_len = s1->qname_len < s2->qname_len ? s1->qname_len : s2->qname_len;
+    int ret = memcmp(s1->qname, s2->qname, min_len);
     
     if (ret == 0) {
-        ret = r1->qname_len - r2->qname_len;
+        ret = s1->qname_len - s2->qname_len;
+        }
+    return ret;
+    }
+
+
+
+int cmp_irflts(const void *p1, const void *p2) {
+    size_t min_len = ((ReadPair *)p1)->irflt_len < ((ReadPair *)p2)->irflt_len ? ((ReadPair *)p1)->irflt_len : ((ReadPair *)p2)->irflt_len;
+    int ret = memcmp(((Segment *)p1)->qname, ((Segment *)p2)->qname, min_len);
+    
+    if (ret == 0) {
+        ret = ((ReadPair *)p1)->irflt_len - ((ReadPair *)p2)->irflt_len;
         }
     return ret;
     }
@@ -935,15 +1117,13 @@ int cmp_qnames(const void *p1, const void *p2) {
 
 
 int cmp_barcodes(const void *p1, const void *p2) {
-    ReadPair *r1 = (ReadPair *)p1, *r2 = (ReadPair *)p2;
-    size_t len = 0;
-    int ret = 0;
-    
     // barcodes of both reads in pair will be identical according to specificatin, therefore just compare segment[0]
-    len = r1->segment[0].barcode_len < r2->segment[0].barcode_len ? r1->segment[0].barcode_len : r2->segment[0].barcode_len;
-    ret = memcmp(r1->segment[0].barcode, r2->segment[0].barcode, len);
+    Segment *s1 = (Segment *)p1, *s2 = (Segment *)p2;
+    size_t min_len = s1->barcode_len < s2->barcode_len ? s1->barcode_len : s2->barcode_len;
+    int ret = memcmp(s1->barcode, s2->barcode, min_len);
+    
     if (ret == 0) {
-        ret = r1->segment[0].barcode_len - r2->segment[0].barcode_len;
+        ret = s1->barcode_len - s2->barcode_len;
         }
     return ret;
     }
@@ -977,15 +1157,18 @@ const char *parse_segment(const char *read, const char *sam_end, Segment *segmen
     const char *start = NULL, *endptr = NULL, *beginning = read;
     long val = 0;
     
-    segment->barcode = NULL; // optional field so must be initialised
-    segment->barcode2 = NULL; // optional field so must be initialised
-    segment->barcode_len = 0; // optional field so must be initialised
+    // optional fields so must be initialised
+    segment->barcode = NULL; 
+    segment->barcode2 = NULL;
+    segment->barcode_len = 0;
+    segment->barcode2_len = 0;
+    
     for (start = read; read < sam_end; ++read) {
         if (*read == '\t' || *read == '\n') {
             switch (++column) {
                 case 1: // qname
                     segment->qname = start;
-                    segment->qname_len = read - start;
+                    segment->qname_len = read - start;                    
                     break;
                 case 2: // flag
                     errno = 0;
