@@ -43,9 +43,15 @@ typedef struct dedupe_t {
     ReadPair *readpairs; // used by dedupe_all to store readpair family members
     size_t readpair_len;
     int optical_duplicate_distance;
+    char *print_family_members;
     
     size_t *family_sizes; // used to store family size statistics
-    size_t family_sizes_len;
+    size_t max_family_size;
+
+    size_t total_reads;
+    size_t pcr_duplicates;
+    size_t optical_duplicates;
+    
     float sequencing_total;
     float sequencing_errors;
     float pcr_total;

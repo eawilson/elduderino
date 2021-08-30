@@ -1,6 +1,6 @@
 CC          = gcc
 CFLAGS      = -Wall -O2
-LDFLAGS     = -lz
+LDFLAGS     = -lz -lm
 prefix      = /usr/local
 exec_prefix = $(prefix)/bin
 
