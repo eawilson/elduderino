@@ -598,11 +598,12 @@ void cigar_family(Dedupe *dd, ReadPair *family, size_t family_size) {
 
 
 void copy_sequence_to_buffer(Dedupe *dd, ReadPair *family, size_t family_size) {
-    size_t max_seq_len = 0, required_len = 0;
+    size_t max_seq_len = 0, required_len = 0, family_size_or_one = 0;
     int i = 0, j = 0;
     char *buffer = NULL;
     
     // Cigars should have already been checked and be identical for all family members, therefore seq_len must also be the same
+    // This is NOT TRUE for unmapped segments but as we only process the first family member it does not matter
     max_seq_len = family->segment[0].seq_len > family->segment[1].seq_len ? family->segment[0].seq_len : family->segment[1].seq_len;
     
     if ((required_len = max_seq_len * 4 * family_size) > dd->buffer_len) {
@@ -615,8 +616,9 @@ void copy_sequence_to_buffer(Dedupe *dd, ReadPair *family, size_t family_size) {
         }
     
     buffer = dd->buffer;
-    for (i = 0; i < family_size; ++i) {
-        for (j = 0; j < 2; ++j) {
+    for (j = 0; j < 2; ++j) {
+        family_size_or_one = family[0].segment[j].flag & UNMAPPED ? 1 : family_size;
+        for (i = 0; i < family_size_or_one; ++i) {
             memcpy(buffer, family[i].segment[j].seq, family[i].segment[j].seq_len);
             family[i].segment[j].seq = buffer;
             buffer += max_seq_len;
