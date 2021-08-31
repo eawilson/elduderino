@@ -604,8 +604,18 @@ void copy_sequence_to_buffer(Dedupe *dd, ReadPair *family, size_t family_size) {
     
     // Cigars should have already been checked and be identical for all family members, therefore seq_len must also be the same
     // This is NOT TRUE for unmapped segments but as we only process the first family member it does not matter
-    max_seq_len = family->segment[0].seq_len > family->segment[1].seq_len ? family->segment[0].seq_len : family->segment[1].seq_len;
+    // max_seq_len = family->segment[0].seq_len > family->segment[1].seq_len ? family->segment[0].seq_len : family->segment[1].seq_len;
     
+    max_seq_len = 0;
+    for (j = 0; j < 2; ++j) {
+        family_size_or_one = family->segment[j].flag & UNMAPPED ? family_size : 1;
+        for (i = 0; i < family_size_or_one; ++i) {
+            if (family[i].segment[j].seq_len > max_seq_len) {
+                max_seq_len = family[i].segment[j].seq_len;
+                }
+            }
+        }
+            
     if ((required_len = max_seq_len * 4 * family_size) > dd->buffer_len) {
         free(dd->buffer);
         if ((dd->buffer = malloc(required_len)) == NULL) {
@@ -616,9 +626,8 @@ void copy_sequence_to_buffer(Dedupe *dd, ReadPair *family, size_t family_size) {
         }
     
     buffer = dd->buffer;
-    for (j = 0; j < 2; ++j) {
-        family_size_or_one = family[0].segment[j].flag & UNMAPPED ? 1 : family_size;
-        for (i = 0; i < family_size_or_one; ++i) {
+    for (i = 0; i < family_size; ++i) {
+        for (j = 0; j < 2; ++j) {
             memcpy(buffer, family[i].segment[j].seq, family[i].segment[j].seq_len);
             family[i].segment[j].seq = buffer;
             buffer += max_seq_len;
