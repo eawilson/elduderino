@@ -45,6 +45,7 @@ int cmp_cigars(const void *p1, const void *p2);
 int cmp_barcodes(const void *p1, const void *p2);
 int cmp_qnames(const void *p1, const void *p2);
 int cmp_irflts(const void *p1, const void *p2);
+int cmp_int(const void *p1, const void *p2);
 void dedupe_all(Dedupe *dd, MashTable *paired, dedupe_function_t dedupe_function);
 void copy_sequence_to_buffer(Dedupe *dd, ReadPair *family, size_t family_size);
 void barcode_families(Dedupe *dd, ReadPair *family, size_t family_size);
@@ -61,6 +62,7 @@ void reversecomplement(char *start, int len);
 char reversebase(char base);
 const char *cigar_op(const char *cigar, const char **op, int32_t *num);
 void write_stats(const char *stats_filename, Dedupe *dd);
+int guess_optical_distance(const char *sam,  const char *sam_end);
 
 
 
@@ -83,6 +85,7 @@ int main (int argc, char **argv) {
     Segment segment = {0}, mate_segment = {0}, swap_segment = {0};
     ReadPair readpair = {0};
     
+    bool disable_optical_duplicates = false;
     dedupe_function_t dedupe_function = cigar_family;
     Dedupe dd = {0};
     
@@ -135,17 +138,19 @@ int main (int argc, char **argv) {
                 break;                
                 
             case 'p':
-                if (*optarg == '\0') {
-                    break;
+                if (strcmp(optarg, "disable") == 0) {
+                    disable_optical_duplicates = true;
                     }
-                errno = 0;
-                val = strtol(optarg, &endptr, 10);
-                if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0) || (endptr == optarg) || val > INT_MAX - 1) {
-                    fprintf(stderr, "Error: Invalid --optical-duplicate-distance\n");
-                    exit(EXIT_FAILURE);
+                else {
+                    errno = 0;
+                    val = strtol(optarg, &endptr, 10);
+                    if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0) || (endptr == optarg) || val > INT_MAX - 1) {
+                        fprintf(stderr, "Error: Invalid --optical-duplicate-distance\n");
+                        exit(EXIT_FAILURE);
+                        }
+                    dd.optical_duplicate_distance = (int)val + 1;
                     }
-                dd.optical_duplicate_distance = (int)val + 1;
-                break;                
+                break;
                 
             case 'u':
                 if (strcmp(optarg, "thruplex") == 0) {
@@ -183,6 +188,10 @@ int main (int argc, char **argv) {
         }
     
     sam_len = (size_t)lseek(sam_fd, 0, SEEK_END);
+    if (sam_len == 0) {
+        fprintf(stderr, "Error: Empty sam file\n");
+        exit(EXIT_FAILURE);
+        }
     lseek(sam_fd, 0, SEEK_SET);
     if ((sam_start = mmap(NULL, sam_len, PROT_READ, MAP_PRIVATE, sam_fd, 0)) == NULL) {
         fprintf(stderr, "Error: Unable to memory map sam file\n");
@@ -210,7 +219,15 @@ int main (int argc, char **argv) {
         if (*sam != '@') {
             break;
             }
-        for (; *sam != '\n'; ++sam);
+        for (; sam < sam_end && *sam != '\n'; ++sam);
+        }
+    if (sam == sam_end) {
+        fprintf(stderr, "Error: Empty sam file\n");
+        exit(EXIT_FAILURE);
+        }
+    
+    if (dd.optical_duplicate_distance == 0 && !disable_optical_duplicates) {
+        dd.optical_duplicate_distance = guess_optical_distance(sam, sam_end);
         }
     
     for (;sam < sam_end; sam = next) {
@@ -701,6 +718,7 @@ size_t coordinate_families(Dedupe *dd, ReadPair *family, size_t family_size) {
 
     for (i = 0; i < family_size; ++i) {
         coordinate = family[i].segment[0].qname + family[i].irflt_len + 1;
+        errno = 0;
         val = strtol(coordinate, (char **)&endptr, 10);
         if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0) || (endptr == coordinate)) {
             fprintf(stderr, "Error: Invalid illumina read name x coordinate\n");
@@ -709,6 +727,7 @@ size_t coordinate_families(Dedupe *dd, ReadPair *family, size_t family_size) {
         family[i].optical_x = (int)val;
 
         coordinate = endptr + 1;
+        errno = 0;
         val = strtol(coordinate, (char **)&endptr, 10);
         if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0) || (endptr == coordinate)) {
             fprintf(stderr, "Error: Invalid illumina read name y coordinate\n");
@@ -1333,6 +1352,103 @@ const char *cigar_op(const char *cigar, const char **op, int32_t *num) {
     *op = endptr;
     return endptr + 1;
     }
+
+
+
+int guess_optical_distance(const char *sam,  const char *sam_end) {
+    // sam has already been moved past header before this function is called
+    int colon_count = 0, *x_coords = NULL, n = 0, optical_duplicate_distance = 0;
+    size_t x_coords_len = 0, i = 0, start = 0;
+    bool qname = true;
+    const char *preceeding_colon = NULL, *endptr = NULL;
+    long val = 0;
+
+    if ((x_coords = calloc(1000, sizeof(int))) == NULL) {
+        fprintf(stderr, "Error: Unable to allocate memory for coordinate buffer\n");
+        exit(EXIT_FAILURE);
+        }
+    
+    for (; sam < sam_end; ++sam) {
+        if (qname) {
+            if (*sam == ':') {
+                if (++colon_count == 6) {
+                    errno = 0;
+                    val = strtol(preceeding_colon + 1, (char **)&endptr, 10);
+                    if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0) || (endptr == preceeding_colon + 1)) {
+                        // Not an illumina qname
+                        break;
+                        }
+                    x_coords[x_coords_len] = (int)val;
+                    if (++x_coords_len == 1000) {
+                        break;
+                        }
+                    }
+                preceeding_colon = sam;
+                }
+            else if (*sam == '\t') {
+                qname = false;
+                }
+            }
+        else if (*sam == '\n') {
+            if (colon_count < 6) {
+                // Not an illumina qname
+                break;
+                }
+            qname = true;
+            colon_count = 0;
+            }
+        }
+    
+    
+    if (x_coords_len == 1000) {
+        qsort(x_coords, x_coords_len, sizeof(int), cmp_int);
+        
+        for (i = 1; i < x_coords_len; ++i) {
+            x_coords[i] -= *x_coords;
+            }
+            
+        for (start = 1; start < x_coords_len; ++start) {
+            if (x_coords[start]) {
+                break;
+                }
+            }
+        
+        for (n = 2; n <= x_coords[start]; ++n) {
+            for (i = start; i < x_coords_len; ++i) {
+                if (x_coords[i] % n) {
+                    break;
+                    }
+                }
+            if (i == x_coords_len) {
+                break;
+                }
+            }
+
+        if (n <= x_coords[start]) {
+            fprintf(stderr, "elduderino: Illumina query name. Patterned flow cell identified. Optical duplicate distance set to 2500\n");
+            optical_duplicate_distance = 2501;
+            }
+        else {
+            fprintf(stderr, "elduderino: Illumina query name. Non-patterned flow cell identified. Optical duplicate distance set to 100\n");
+            optical_duplicate_distance = 101;
+            }
+        }
+    else if (sam == sam_end) {
+        fprintf(stderr, "elduderino: Illumina query name. Too few reads to identify flow cell type. Optical duplicate detection disabled\n");
+        }
+    else {
+        fprintf(stderr, "elduderino: Non-Illumina query name. Optical duplicate detection disabled\n");
+        }
+
+    free(x_coords);
+    return optical_duplicate_distance;
+    }
+
+
+
+int cmp_int(const void *p1, const void *p2) { 
+    return *(const int *)p1  - *(const int *)p2; 
+    } 
 
 
 
