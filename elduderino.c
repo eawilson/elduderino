@@ -425,9 +425,11 @@ void write_stats(const char *stats_filename, Dedupe *dd) {
     fprintf(stats_file, "    \"mean_family_size\": %.2f,\n", (float)total_reads / total_families);
     
     fprintf(stats_file, "    \"duplicate_rate\": %.4f,\n", (float)(dd->optical_duplicates + dd->pcr_duplicates) / dd->total_reads);
-    fprintf(stats_file, "    \"duplicate_rate_optical\": %.4f,\n", (float)dd->optical_duplicates / dd->total_reads);
-    fprintf(stats_file, "    \"duplicate_rate_pcr\": %.4f,\n", (float)dd->pcr_duplicates / dd->total_reads);
-
+    if (dd->optical_duplicate_distance != 0) {
+        fprintf(stats_file, "    \"duplicate_rate_optical\": %.4f,\n", (float)dd->optical_duplicates / dd->total_reads);
+        fprintf(stats_file, "    \"duplicate_rate_pcr\": %.4f,\n", (float)dd->pcr_duplicates / dd->total_reads);
+        }
+    
     fprintf(stats_file, "    \"sequencing_error_rate\": %.4f,\n", dd->sequencing_errors / dd->sequencing_total);
     fprintf(stats_file, "    \"pcr_error_rate\": %.4f\n", dd->pcr_errors / dd->pcr_total);
     fprintf(stats_file, "}\n");
