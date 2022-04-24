@@ -100,11 +100,15 @@ int main (int argc, char **argv) {
                                            {"min-family-size", required_argument, 0, 'm'},
                                            {"optical-duplicate-distance", required_argument, 0, 'p'},
                                            {"print-family-members", required_argument, 0, 'P'},
+                                           {"concordance", required_argument, 0, 'c'},
                                            {0, 0, 0, 0}};
-
+    
+    // Set defaults
+    dd.percent_concordance = 60;
+    
     // Parse optional arguments
     while (c != -1) {
-        c = getopt_long(argc, argv, "o:s:u:m:p:P:", long_options, &option_index);
+        c = getopt_long(argc, argv, "o:s:u:m:p:P:c:", long_options, &option_index);
 
         switch (c) {
             case 'P':
@@ -135,6 +139,20 @@ int main (int argc, char **argv) {
                     exit(EXIT_FAILURE);
                     }
                 dd.min_family_size = (size_t)val;
+                break;                
+                
+            case 'c':
+                errno = 0;
+                val = strtol(optarg, &endptr, 10);
+                if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0) || (endptr == optarg)) {
+                    fprintf(stderr, "Error: Invalid --concordance\n");
+                    exit(EXIT_FAILURE);
+                    }
+                dd.percent_concordance = (size_t)val;
+                if (dd.percent_concordance < 0 || dd.percent_concordance > 100) {
+                    fprintf(stderr, "Error: Concordance must be an integer in the range 0-100\n");
+                    exit(EXIT_FAILURE);
+                    }
                 break;                
                 
             case 'p':
@@ -1032,7 +1050,7 @@ void dedupe_pcr(Dedupe *dd, ReadPair *family, size_t family_size) {
         exit(EXIT_FAILURE);
         }
     
-    sixty_percent_family_size = ((family_size * 6) / 10) + !!((family_size * 6) % 10);
+    sixty_percent_family_size = ((family_size * dd->percent_concordance) / 100) + !!((family_size * dd->percent_concordance) % 100);
     
     for (r = 0; r < 2; ++r) {
         read = r1r2[r];

@@ -37,6 +37,7 @@ typedef struct readpair_t {
 
 typedef struct dedupe_t {
     size_t min_family_size;
+    size_t percent_concordance;
     FILE *output_file;
     char *buffer; // writable buffer to store seq and qual that may be modified
     size_t buffer_len;
